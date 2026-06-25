@@ -15,6 +15,7 @@ extern "C" {
 #include "esp_camera.h"
 #include "img_converters.h"
 #include "esp_websocket_client.h"
+#include "esp_crt_bundle.h"
 }
 
 namespace {
@@ -37,7 +38,7 @@ constexpr int JPEG_QUALITY = 80;
  */
 constexpr bool RELAY_ENABLED = true;  // set true after configuring the URI below
 constexpr const char *RELAY_WS_URI =
-    "ws://ip-cam-server-f1u92jpoc-anuruddhas-projects.vercel.app:8080/ingest?token=pick-a-secret";
+    "wss://ipcamserver-3nq0a5wz.b4a.run/ingest?token=pick-a-secret";
 constexpr int RELAY_FRAME_INTERVAL_MS = 150;  // ~6-7 fps target upload rate
 
 /* ---------------- AI-Thinker ESP32-CAM pin map ---------------- */
@@ -381,6 +382,10 @@ void relay_init()
     cfg.reconnect_timeout_ms = 5000;
     cfg.network_timeout_ms  = 10000;
     cfg.task_stack          = 6144;
+    /* Validate the server's TLS cert against the bundled root CAs. Required
+     * for wss:// to public hosts; harmless for plain ws://. Needs
+     * CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y (set in sdkconfig.defaults). */
+    cfg.crt_bundle_attach   = esp_crt_bundle_attach;
 
     s_ws_client = esp_websocket_client_init(&cfg);
     if (s_ws_client == nullptr) {

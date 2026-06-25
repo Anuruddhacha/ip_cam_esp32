@@ -24,8 +24,10 @@ constexpr const char *WIFI_SSID = "SLT-4G_597084";
 constexpr const char *WIFI_PASS = "A6FC8BA5";
 constexpr const char *TAG = "ESP32_CAM";
 
-/* Software JPEG quality for frame2jpg: 0-100, higher = better/larger. */
-constexpr int JPEG_QUALITY = 80;
+/* Software JPEG quality for frame2jpg: 0-100, higher = better but larger and
+ * slower to encode. Lower it to raise the frame rate (smaller frames encode
+ * and upload faster). ~40-60 is a good speed/quality balance. */
+constexpr int JPEG_QUALITY = 45;
 
 /* ---------------- Remote relay (WebSocket push) ----------------
  * The camera makes an OUTBOUND WebSocket connection to your public relay
@@ -38,8 +40,11 @@ constexpr int JPEG_QUALITY = 80;
  */
 constexpr bool RELAY_ENABLED = true;  // set true after configuring the URI below
 constexpr const char *RELAY_WS_URI =
-    "wss://ipcamserver-3nq0a5wz.b4a.run/ingest?token=pick-a-secret";
-constexpr int RELAY_FRAME_INTERVAL_MS = 150;  // ~6-7 fps target upload rate
+    "wss://ipcamserver-bdf1an9v.b4a.run/ingest?token=pick-a-secret";
+/* Minimum delay between frames. The real limit is JPEG encode + upload time;
+ * this just caps the max rate / yields CPU to other tasks. Lower = faster.
+ * Set to 0 to push as fast as the pipeline allows. */
+constexpr int RELAY_FRAME_INTERVAL_MS = 20;
 
 /* ---------------- AI-Thinker ESP32-CAM pin map ---------------- */
 constexpr int PWDN_GPIO_NUM  = 32;

@@ -17,6 +17,10 @@ dependencies.lock
 Thumbs.db
 desktop.ini
 
+# ===== Relay server (Node.js) =====
+relay/node_modules/
+relay/package-lock.json
+
 # ===== Misc =====
 *.log
 *.bak

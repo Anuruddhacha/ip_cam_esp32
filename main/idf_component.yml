@@ -2,4 +2,5 @@
 ## Pulls in the official Espressif camera driver (OV2640 etc.)
 dependencies:
   espressif/esp32-camera: "^2.0.0"
+  espressif/esp_websocket_client: ">=1.2.0"
   idf: ">=5.0"

@@ -14,6 +14,7 @@ extern "C" {
 #include "esp_psram.h"
 #include "esp_camera.h"
 #include "img_converters.h"
+#include "esp_websocket_client.h"
 }
 
 namespace {
@@ -24,6 +25,20 @@ constexpr const char *TAG = "ESP32_CAM";
 
 /* Software JPEG quality for frame2jpg: 0-100, higher = better/larger. */
 constexpr int JPEG_QUALITY = 80;
+
+/* ---------------- Remote relay (WebSocket push) ----------------
+ * The camera makes an OUTBOUND WebSocket connection to your public relay
+ * server and pushes JPEG frames. Viewers connect to the relay (not to the
+ * camera), so this works from any network without port-forwarding.
+ *
+ * 1. Deploy the relay in ./relay on a public host (VPS / free tier).
+ * 2. Set RELAY_WS_URI (host + token) and flip RELAY_ENABLED to true.
+ * 3. Use wss:// (TLS) for real deployments; see relay/README.md.
+ */
+constexpr bool RELAY_ENABLED = true;  // set true after configuring the URI below
+constexpr const char *RELAY_WS_URI =
+    "ws://ip-cam-server-f1u92jpoc-anuruddhas-projects.vercel.app:8080/ingest?token=pick-a-secret";
+constexpr int RELAY_FRAME_INTERVAL_MS = 150;  // ~6-7 fps target upload rate
 
 /* ---------------- AI-Thinker ESP32-CAM pin map ---------------- */
 constexpr int PWDN_GPIO_NUM  = 32;
@@ -293,6 +308,94 @@ httpd_handle_t start_webserver()
     return server;
 }
 
+/* ---------------- Remote relay client ---------------- */
+
+esp_websocket_client_handle_t s_ws_client = nullptr;
+volatile bool s_ws_connected = false;
+
+void ws_event_handler(void *handler_args, esp_event_base_t base,
+                      int32_t event_id, void *event_data)
+{
+    switch (event_id) {
+    case WEBSOCKET_EVENT_CONNECTED:
+        s_ws_connected = true;
+        ESP_LOGI(TAG, "Relay connected");
+        break;
+    case WEBSOCKET_EVENT_DISCONNECTED:
+        s_ws_connected = false;
+        ESP_LOGW(TAG, "Relay disconnected");
+        break;
+    case WEBSOCKET_EVENT_ERROR:
+        ESP_LOGW(TAG, "Relay connection error");
+        break;
+    default:
+        break;
+    }
+}
+
+/* Continuously capture, JPEG-encode, and push frames to the relay. */
+void relay_push_task(void *arg)
+{
+    while (true) {
+        if (!s_ws_connected) {
+            vTaskDelay(pdMS_TO_TICKS(200));
+            continue;
+        }
+
+        camera_fb_t *fb = esp_camera_fb_get();
+        if (fb == nullptr) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+
+        uint8_t *jpg_buf = nullptr;
+        size_t jpg_len = 0;
+        bool ok = frame2jpg(fb, JPEG_QUALITY, &jpg_buf, &jpg_len);
+        esp_camera_fb_return(fb);
+
+        if (ok) {
+            int sent = esp_websocket_client_send_bin(
+                s_ws_client, reinterpret_cast<const char *>(jpg_buf),
+                jpg_len, pdMS_TO_TICKS(2000));
+            if (sent < 0) {
+                ESP_LOGW(TAG, "Relay frame send failed");
+            }
+            free(jpg_buf);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(RELAY_FRAME_INTERVAL_MS));
+    }
+}
+
+void relay_init()
+{
+    if (!RELAY_ENABLED) {
+        ESP_LOGW(TAG, "Relay disabled. Set RELAY_WS_URI and RELAY_ENABLED=true. "
+                      "Local /stream still works on the LAN.");
+        return;
+    }
+
+    esp_websocket_client_config_t cfg = {};
+    cfg.uri                 = RELAY_WS_URI;
+    cfg.buffer_size         = 8192;
+    cfg.reconnect_timeout_ms = 5000;
+    cfg.network_timeout_ms  = 10000;
+    cfg.task_stack          = 6144;
+
+    s_ws_client = esp_websocket_client_init(&cfg);
+    if (s_ws_client == nullptr) {
+        ESP_LOGE(TAG, "Failed to init relay WebSocket client");
+        return;
+    }
+
+    esp_websocket_register_events(s_ws_client, WEBSOCKET_EVENT_ANY,
+                                  ws_event_handler, nullptr);
+    esp_websocket_client_start(s_ws_client);
+
+    xTaskCreate(relay_push_task, "relay_push", 8192, nullptr, 5, nullptr);
+    ESP_LOGI(TAG, "Relay client started -> %s", RELAY_WS_URI);
+}
+
 }  // namespace
 
 extern "C" void app_main(void)
@@ -311,6 +414,7 @@ extern "C" void app_main(void)
 
     wifi_init();
     start_webserver();
+    relay_init();
 
     ESP_LOGI(TAG, "ESP32-CAM ready");
 }

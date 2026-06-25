@@ -1,0 +1,11 @@
+# Only the relay is deployed; keep firmware/build artifacts out of the image.
+build/
+managed_components/
+sdkconfig
+sdkconfig.old
+main/
+CMakeLists.txt
+.git/
+.vscode/
+relay/node_modules/
+*.log

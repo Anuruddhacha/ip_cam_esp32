@@ -1,0 +1,5 @@
+## IDF Component Manager manifest
+## Pulls in the official Espressif camera driver (OV2640 etc.)
+dependencies:
+  espressif/esp32-camera: "^2.0.0"
+  idf: ">=5.0"

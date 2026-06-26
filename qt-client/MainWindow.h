@@ -2,14 +2,16 @@
 
 #include <QMainWindow>
 #include <QtWebSockets/QWebSocket>
+#include <QElapsedTimer>
+#include <QSize>
 
-class QLabel;
+class VideoWidget;
 class QLineEdit;
-class QPushButton;
+class QCheckBox;
+class QAction;
+class QLabel;
 
-// Desktop viewer for the ESP32-CAM relay.
-// Connects to the relay's /view WebSocket endpoint and renders each incoming
-// binary message as a JPEG frame.
+// Industrial-style desktop viewer for the ESP32-CAM relay.
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
@@ -20,19 +22,55 @@ private slots:
     void toggleConnection();
     void onConnected();
     void onDisconnected();
-    void onBinaryMessage(const QByteArray &message);
+    void onBinaryMessage(const QByteArray &data);
     void onError();
 
-private:
-    void setStatus(const QString &text, const QString &color);
+    void takeSnapshot();
+    void toggleRecording(bool on);
+    void toggleFullScreen(bool on);
+    void tickStats();   // 1 Hz: refresh FPS / bitrate / clock overlay
 
-    QLineEdit  *m_urlEdit     = nullptr;
-    QPushButton*m_connectBtn  = nullptr;
-    QLabel     *m_statusLabel = nullptr;
-    QLabel     *m_videoLabel  = nullptr;
-    QLabel     *m_fpsLabel    = nullptr;
+private:
+    void buildUi();
+    void buildToolbar();
+    void buildDock();
+    void buildStatusBar();
+    void applyTheme();
+    void setConnectionState(const QString &text, const QColor &color);
+    void openConnection();
+
+    VideoWidget *m_video = nullptr;
+
+    // Connection panel
+    QLineEdit *m_urlEdit       = nullptr;
+    QLineEdit *m_nameEdit      = nullptr;
+    QCheckBox *m_autoReconnect = nullptr;
+
+    // Toolbar actions
+    QAction *m_connectAct    = nullptr;
+    QAction *m_snapshotAct   = nullptr;
+    QAction *m_recordAct     = nullptr;
+    QAction *m_fullscreenAct = nullptr;
+
+    // Status bar widgets
+    QLabel *m_statusText  = nullptr;
+    QLabel *m_resLabel    = nullptr;
+    QLabel *m_fpsLabel    = nullptr;
+    QLabel *m_rateLabel   = nullptr;
+    QLabel *m_framesLabel = nullptr;
 
     QWebSocket m_socket;
-    bool m_wantConnected = false;  // user intent, drives auto-reconnect
-    int  m_frameCount = 0;         // frames since last FPS tick
+    bool m_wantConnected = false;
+
+    // Stats
+    int     m_frameCount = 0;       // frames since last tick
+    quint64 m_totalFrames = 0;
+    quint64 m_bytesSinceTick = 0;
+    QSize   m_lastSize;
+
+    // Recording (saves incoming JPEG frames to a session folder)
+    bool    m_recording = false;
+    QString m_recDir;
+    quint64 m_recFrames = 0;
+    QElapsedTimer m_recTimer;
 };

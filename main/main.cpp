@@ -40,7 +40,7 @@ constexpr int JPEG_QUALITY = 45;
  */
 constexpr bool RELAY_ENABLED = true;  // set true after configuring the URI below
 constexpr const char *RELAY_WS_URI =
-    "wss://ipcamserver-bdf1an9v.b4a.run/ingest?token=pick-a-secret";
+    "wss://ipcamserver-f9ax1i26.b4a.run/ingest?token=pick-a-secret";
 /* Minimum delay between frames. The real limit is JPEG encode + upload time;
  * this just caps the max rate / yields CPU to other tasks. Lower = faster.
  * Set to 0 to push as fast as the pipeline allows. */

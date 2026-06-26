@@ -21,6 +21,10 @@ desktop.ini
 relay/node_modules/
 relay/package-lock.json
 
+# ===== Qt desktop client =====
+qt-client/build/
+qt-client/*.user
+
 # ===== Misc =====
 *.log
 *.bak

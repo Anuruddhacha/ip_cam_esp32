@@ -1,0 +1,31 @@
+# ===== ESP-IDF build output =====
+build/
+sdkconfig
+sdkconfig.old
+
+# Managed components are fetched from the component manager on build
+managed_components/
+dependencies.lock
+
+# ===== Editor / IDE =====
+.vscode/
+.idea/
+*.code-workspace
+
+# ===== OS junk =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== Relay server (Node.js) =====
+relay/node_modules/
+relay/package-lock.json
+
+# ===== Qt desktop client =====
+qt-client/build/
+qt-client/*.user
+
+# ===== Misc =====
+*.log
+*.bak
+*.tmp

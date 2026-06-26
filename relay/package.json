@@ -1,0 +1,13 @@
+{
+  "name": "esp32cam-relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WebSocket relay that fans out ESP32-CAM JPEG frames to remote viewers",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

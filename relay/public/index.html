@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32-CAM Remote</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: #0e0e10; color: #eaeaea; text-align: center; }
+    header { padding: 12px; font-size: 18px; font-weight: 600; }
+    #status { font-size: 13px; padding: 4px 0 12px; color: #9aa0a6; }
+    #status.live { color: #34c759; }
+    #status.down { color: #ff453a; }
+    #view { max-width: 100%; height: auto; background: #000; border: 1px solid #2a2a2e; min-height: 200px; }
+    #fps { font-size: 12px; color: #9aa0a6; padding: 8px; }
+  </style>
+</head>
+<body>
+  <header>ESP32-CAM Remote Stream</header>
+  <div id="status">connecting…</div>
+  <img id="view" alt="live stream">
+  <div id="fps"></div>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const img = document.getElementById('view');
+    const fpsEl = document.getElementById('fps');
+
+    let objectUrl = null;
+    let frames = 0;
+    setInterval(() => { fpsEl.textContent = frames + ' fps'; frames = 0; }, 1000);
+
+    function connect() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(`${proto}://${location.host}/view`);
+      ws.binaryType = 'blob';
+
+      ws.onopen = () => { statusEl.textContent = 'live'; statusEl.className = 'live'; };
+      ws.onclose = () => {
+        statusEl.textContent = 'disconnected — retrying…';
+        statusEl.className = 'down';
+        setTimeout(connect, 2000);
+      };
+      ws.onerror = () => ws.close();
+      ws.onmessage = (e) => {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        objectUrl = URL.createObjectURL(e.data);
+        img.src = objectUrl;
+        frames++;
+      };
+    }
+
+    connect();
+  </script>
+</body>
+</html>

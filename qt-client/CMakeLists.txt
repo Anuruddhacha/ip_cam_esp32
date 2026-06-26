@@ -13,6 +13,8 @@ add_executable(esp32cam_client
     main.cpp
     MainWindow.cpp
     MainWindow.h
+    VideoWidget.cpp
+    VideoWidget.h
 )
 
 target_link_libraries(esp32cam_client PRIVATE

@@ -30,7 +30,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     statusBar()->showMessage("Ready");
     wireSignals();
 
-    setWindowTitle("ESP32-CAM  |  Industrial Viewer");
+    setWindowTitle("AXIO-CAM Viewer");
     resize(1180, 760);
 
     m_panel->setConnectionState("OFFLINE", QColor(Theme::Color::Error));

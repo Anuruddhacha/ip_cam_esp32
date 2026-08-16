@@ -4,8 +4,8 @@
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
-    QApplication::setApplicationName("ESP32-CAM Industrial Viewer");
-    QApplication::setOrganizationName("ESP32CAM");
+    QApplication::setApplicationName("AXIO-CAM Viewer");
+    QApplication::setOrganizationName("AXIO_CAM");
 
     Theme::applyDarkBlue(app);
 

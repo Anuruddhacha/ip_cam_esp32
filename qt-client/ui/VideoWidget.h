@@ -3,10 +3,12 @@
 #include <QWidget>
 #include <QImage>
 #include <QString>
+#include <QTimer>
+#include <QElapsedTimer>
 
-// Renders the live camera frame with industrial-style overlays:
-// camera name, live timestamp, resolution/FPS, a REC indicator, and a
-// "NO SIGNAL" placeholder when there is no video.
+// Renders the live frame with industrial overlays (camera name, timestamp,
+// resolution/FPS, REC indicator) and a NO-SIGNAL placeholder. Self-refreshes
+// so the clock and REC blink update even without new frames.
 class VideoWidget : public QWidget {
     Q_OBJECT
 
@@ -14,11 +16,11 @@ public:
     explicit VideoWidget(QWidget *parent = nullptr);
 
     void setFrame(const QImage &img);
-    void clearFrame();
+    void clear();
     void setConnected(bool connected);
     void setCameraName(const QString &name);
-    void setFps(double fps);
-    void setRecording(bool recording, qint64 elapsedMs = 0);
+    void setFps(int fps);
+    void setRecording(bool recording);
 
     QImage currentFrame() const { return m_frame; }
 
@@ -31,13 +33,15 @@ protected:
 
 private:
     void drawOverlays(QPainter &p);
-    void drawLabel(QPainter &p, const QRect &area, Qt::Alignment align,
+    void drawBadge(QPainter &p, const QRect &area, Qt::Alignment align,
                    const QString &text, const QColor &color);
 
     QImage  m_frame;
     bool    m_connected = false;
     bool    m_recording = false;
-    qint64  m_recElapsedMs = 0;
     QString m_cameraName = "CAM 01";
-    double  m_fps = 0.0;
+    int     m_fps = 0;
+
+    QTimer        m_refresh;   // drives overlay clock / blink
+    QElapsedTimer m_recTimer;
 };

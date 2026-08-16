@@ -5,6 +5,7 @@
 extern "C" {
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -29,6 +30,13 @@ constexpr const char *TAG = "ESP32_CAM";
  * and upload faster). ~40-60 is a good speed/quality balance. */
 constexpr int JPEG_QUALITY = 45;
 
+/* Minimum delay between captures in capture_task (the only task that talks
+ * to the camera). The real limit is JPEG encode time; this just caps the
+ * max rate / yields CPU to other tasks. Lower = faster. Set to 0 to capture
+ * as fast as the pipeline allows. Both /stream and the relay push task read
+ * whatever capture_task last produced, so this one constant paces both. */
+constexpr int CAPTURE_INTERVAL_MS = 20;
+
 /* ---------------- Remote relay (WebSocket push) ----------------
  * The camera makes an OUTBOUND WebSocket connection to your public relay
  * server and pushes JPEG frames. Viewers connect to the relay (not to the
@@ -40,11 +48,7 @@ constexpr int JPEG_QUALITY = 45;
  */
 constexpr bool RELAY_ENABLED = true;  // set true after configuring the URI below
 constexpr const char *RELAY_WS_URI =
-    "wss://ipcamserver-f9ax1i26.b4a.run/ingest?token=pick-a-secret";
-/* Minimum delay between frames. The real limit is JPEG encode + upload time;
- * this just caps the max rate / yields CPU to other tasks. Lower = faster.
- * Set to 0 to push as fast as the pipeline allows. */
-constexpr int RELAY_FRAME_INTERVAL_MS = 20;
+    "wss://ipcamserver-17qt9dgm.b4a.run/ingest?token=pick-a-secret";
 
 /* ---------------- AI-Thinker ESP32-CAM pin map ---------------- */
 constexpr int PWDN_GPIO_NUM  = 32;
@@ -180,6 +184,75 @@ void wifi_init()
     ESP_LOGI(TAG, "WiFi started, connecting to \"%s\"", WIFI_SSID);
 }
 
+/* ---------------- Shared frame buffer ----------------
+ * capture_task is the ONLY task that ever calls esp_camera_fb_get() /
+ * frame2jpg(). The local MJPEG stream, the /capture endpoint, and the
+ * relay push task all just read the latest encoded JPEG from here instead
+ * of independently capturing+encoding. That used to double the camera/CPU
+ * work whenever a LAN viewer and the relay were both active, and the
+ * esp32-camera driver isn't documented as safe for concurrent fb_get()
+ * calls from multiple tasks.
+ */
+struct SharedFrame {
+    SemaphoreHandle_t mutex = nullptr;
+    uint8_t *buf = nullptr;
+    size_t len = 0;
+    uint32_t seq = 0;  // bumped on every new frame
+};
+
+SharedFrame s_frame;
+
+/* Copies out the latest frame if it's newer than *last_seq, updating
+ * *last_seq. Caller owns and must free() the returned buffer. Returns
+ * false (touching nothing) if no newer frame is available yet. */
+bool frame_buffer_get_latest(uint32_t *last_seq, uint8_t **out_buf, size_t *out_len)
+{
+    bool got = false;
+    xSemaphoreTake(s_frame.mutex, portMAX_DELAY);
+    if (s_frame.buf != nullptr && s_frame.seq != *last_seq) {
+        auto *copy = static_cast<uint8_t *>(malloc(s_frame.len));
+        if (copy != nullptr) {
+            std::memcpy(copy, s_frame.buf, s_frame.len);
+            *out_buf = copy;
+            *out_len = s_frame.len;
+            *last_seq = s_frame.seq;
+            got = true;
+        }
+    }
+    xSemaphoreGive(s_frame.mutex);
+    return got;
+}
+
+/* The only task that touches the camera: capture, JPEG-encode, publish. */
+void capture_task(void *arg)
+{
+    while (true) {
+        camera_fb_t *fb = esp_camera_fb_get();
+        if (fb == nullptr) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+
+        uint8_t *jpg_buf = nullptr;
+        size_t jpg_len = 0;
+        bool ok = frame2jpg(fb, JPEG_QUALITY, &jpg_buf, &jpg_len);
+        esp_camera_fb_return(fb);
+
+        if (ok) {
+            xSemaphoreTake(s_frame.mutex, portMAX_DELAY);
+            free(s_frame.buf);
+            s_frame.buf = jpg_buf;
+            s_frame.len = jpg_len;
+            s_frame.seq++;
+            xSemaphoreGive(s_frame.mutex);
+        } else {
+            ESP_LOGW(TAG, "JPEG encode failed");
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(CAPTURE_INTERVAL_MS));
+    }
+}
+
 /* ---------------- HTTP handlers ---------------- */
 
 esp_err_t index_handler(httpd_req_t *req)
@@ -201,21 +274,11 @@ esp_err_t index_handler(httpd_req_t *req)
 
 esp_err_t capture_handler(httpd_req_t *req)
 {
-    camera_fb_t *fb = esp_camera_fb_get();
-    if (fb == nullptr) {
-        ESP_LOGE(TAG, "Camera capture failed");
-        httpd_resp_send_500(req);
-        return ESP_FAIL;
-    }
-
-    /* GC2145 gives us raw RGB565; encode to JPEG in software. */
+    uint32_t seq = 0;  // always wants whatever is newest
     uint8_t *jpg_buf = nullptr;
     size_t jpg_len = 0;
-    bool ok = frame2jpg(fb, JPEG_QUALITY, &jpg_buf, &jpg_len);
-    esp_camera_fb_return(fb);
-
-    if (!ok) {
-        ESP_LOGE(TAG, "JPEG encode failed");
+    if (!frame_buffer_get_latest(&seq, &jpg_buf, &jpg_len)) {
+        ESP_LOGE(TAG, "No frame available yet");
         httpd_resp_send_500(req);
         return ESP_FAIL;
     }
@@ -238,24 +301,14 @@ esp_err_t stream_handler(httpd_req_t *req)
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 
     char part_buf[64];
+    uint32_t last_seq = 0;
 
     while (true) {
-        camera_fb_t *fb = esp_camera_fb_get();
-        if (fb == nullptr) {
-            ESP_LOGE(TAG, "Camera capture failed");
-            res = ESP_FAIL;
-            break;
-        }
-
         uint8_t *jpg_buf = nullptr;
         size_t jpg_len = 0;
-        bool ok = frame2jpg(fb, JPEG_QUALITY, &jpg_buf, &jpg_len);
-        esp_camera_fb_return(fb);
-
-        if (!ok) {
-            ESP_LOGE(TAG, "JPEG encode failed");
-            res = ESP_FAIL;
-            break;
+        if (!frame_buffer_get_latest(&last_seq, &jpg_buf, &jpg_len)) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
         }
 
         res = httpd_resp_send_chunk(req, STREAM_BOUNDARY, std::strlen(STREAM_BOUNDARY));
@@ -339,37 +392,31 @@ void ws_event_handler(void *handler_args, esp_event_base_t base,
     }
 }
 
-/* Continuously capture, JPEG-encode, and push frames to the relay. */
+/* Pushes whatever capture_task last produced to the relay. Does not touch
+ * the camera itself. */
 void relay_push_task(void *arg)
 {
+    uint32_t last_seq = 0;
     while (true) {
         if (!s_ws_connected) {
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
 
-        camera_fb_t *fb = esp_camera_fb_get();
-        if (fb == nullptr) {
-            vTaskDelay(pdMS_TO_TICKS(50));
+        uint8_t *jpg_buf = nullptr;
+        size_t jpg_len = 0;
+        if (!frame_buffer_get_latest(&last_seq, &jpg_buf, &jpg_len)) {
+            vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
 
-        uint8_t *jpg_buf = nullptr;
-        size_t jpg_len = 0;
-        bool ok = frame2jpg(fb, JPEG_QUALITY, &jpg_buf, &jpg_len);
-        esp_camera_fb_return(fb);
-
-        if (ok) {
-            int sent = esp_websocket_client_send_bin(
-                s_ws_client, reinterpret_cast<const char *>(jpg_buf),
-                jpg_len, pdMS_TO_TICKS(2000));
-            if (sent < 0) {
-                ESP_LOGW(TAG, "Relay frame send failed");
-            }
-            free(jpg_buf);
+        int sent = esp_websocket_client_send_bin(
+            s_ws_client, reinterpret_cast<const char *>(jpg_buf),
+            jpg_len, pdMS_TO_TICKS(2000));
+        if (sent < 0) {
+            ESP_LOGW(TAG, "Relay frame send failed");
         }
-
-        vTaskDelay(pdMS_TO_TICKS(RELAY_FRAME_INTERVAL_MS));
+        free(jpg_buf);
     }
 }
 
@@ -421,6 +468,11 @@ extern "C" void app_main(void)
         ESP_LOGE(TAG, "Camera failed to initialize, halting");
         return;
     }
+
+    s_frame.mutex = xSemaphoreCreateMutex();
+    /* Priority above relay_push_task/httpd (5) so the producer isn't
+     * starved by its consumers. */
+    xTaskCreate(capture_task, "cam_capture", 8192, nullptr, 6, nullptr);
 
     wifi_init();
     start_webserver();

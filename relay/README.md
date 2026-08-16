@@ -59,7 +59,7 @@ Ask and I can wire up the `wss://` path in the firmware.
 
 ## Notes / limits
 
-- The ESP32-CAM (GC2145, software JPEG, QVGA) realistically pushes a few fps.
-  Tune `CAPTURE_INTERVAL_MS` and `JPEG_QUALITY` in `main.cpp`.
+- The ESP32-CAM (GC2145, software JPEG, QQVGA) realistically pushes ~12-18 fps.
+  Tune `CAPTURE_INTERVAL_MS`, `JPEG_QUALITY`, and `frame_size` in `main.cpp`.
 - One camera, many viewers is fine — the relay fans out the latest frame.
 - `/healthz` returns `ok` for uptime checks.
